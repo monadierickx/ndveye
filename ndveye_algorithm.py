@@ -47,6 +47,7 @@ from qgis.core import (
     QgsFeature,
     QgsSimpleLineSymbolLayer,
     QgsSimpleMarkerSymbolLayer,
+    QgsProcessingParameterFolderDestination,
 )
 import os
 import shapely
@@ -182,8 +183,16 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 defaultValue=True,
             )
         )
+        
+        self.addParameter(
+            QgsProcessingParameterFolderDestination(
+                'FOLDER_PATH',
+                'Folder location'
+            )
+        )
 
     def processAlgorithm(self, parameters, context, feedback):
+        folder_path = self.parameterAsString(parameters, 'FOLDER_PATH', context)
         polygondfs = []
         pointdfs = []
         for index, inputId in enumerate(parameters["inputRasters"]):
@@ -277,14 +286,14 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
 
         if parameters["Output: polygons"]:
             gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(3857).to_file(
-                "/Users/palszabo/ndveye/polygons.gpkg",
+                folder_path + "polygons.gpkg",
                 driver="GPKG",
                 layer="polygons",
                 engine="pyogrio",
             )
             polygonLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
-                    "/Users/palszabo/ndveye/polygons.gpkg", "resultPolygons", "ogr"
+                    folder_path + "polygons.gpkg", "resultPolygons", "ogr"
                 )
             )
             polygonLayer.renderer().symbol().changeSymbolLayer(
@@ -293,7 +302,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
 
         if parameters["Output: points"]:
             gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(3857).to_file(
-                "/Users/palszabo/ndveye/points.gpkg",
+                folder_path + "points.gpkg",
                 driver="GPKG",
                 layer="points",
                 engine="pyogrio",
@@ -301,7 +310,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
             pointsLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
-                    "/Users/palszabo/ndveye/points.gpkg", "resultPoints", "ogr"
+                    folder_path + "points.gpkg", "resultPoints", "ogr"
                 )
             )
             pointsLayer.renderer().symbol().changeSymbolLayer(
