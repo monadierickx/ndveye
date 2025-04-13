@@ -57,7 +57,7 @@ import pandas as pd
 import geopandas as gpd
 import astropy.convolution
 import photutils.segmentation
-
+import json
 
 class ndveyeAlgorithm(QgsProcessingAlgorithm):
     """
@@ -317,11 +317,15 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 0, QgsSimpleMarkerSymbolLayer(color=QColor("#38db2c"), size=3)
             )
 
-        return {
+        data = {
             "Found this many": len(shapes),
             "Background offset": parameters["Background offset"],
             "parameters": parameters,
         }
+        output_file = folder_path + "summary.json"
+        with open(output_file, "w") as file:
+            json.dump(data, file, indent=4)
+        return data
 
     def name(self):
         """
