@@ -58,6 +58,7 @@ import geopandas as gpd
 import astropy.convolution
 import photutils.segmentation
 import json
+# from pyproj import Transformer
 
 class ndveyeAlgorithm(QgsProcessingAlgorithm):
     """
@@ -183,11 +184,27 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 defaultValue=True,
             )
         )
+
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                "Output: parameter summary",
+                self.tr("Output: parameter summary"),
+                defaultValue=True,
+            )
+        )
+        
+        self.addParameter(
+            QgsProcessingParameterBoolean(
+                "EPSG:32631",
+                self.tr("Use EPSG:32631 (UTM 31N) instead of EPSG:3857 (Web Mercator)"),
+                defaultValue=True,
+            )
+        )
         
         self.addParameter(
             QgsProcessingParameterFolderDestination(
-                'FOLDER_PATH',
-                'Folder location'
+                "FOLDER_PATH",
+                "Folder location"
             )
         )
 
@@ -216,10 +233,24 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             pixelWidth = totalWidth / colNum
             pixelHeight = totalHeight / rowNum
 
+            # EPSG:3857
             def pixelcoord_to_epsg3857(row, col):
                 x = bounds.left + (col + 1 / 2) * pixelWidth
                 y = bounds.top - (row + 1 / 2) * pixelHeight
                 return x, y
+
+            # EPSG:32631
+            # def pixelcoord_to_epsg32631(row, col):
+            #     x_web_mercator, y_web_mercator = pixelcoord_to_epsg3857(row, col)
+                
+            #     # Create transformer (3857 → 32631 via WGS84 geographic CRS)
+            #     transformer = Transformer.from_crs("EPSG:3857", "EPSG:32631", always_xy=True)
+
+            #     # Convert Web Mercator coordinates to UTM 31N
+            #     return transformer.transform(
+            #         x_web_mercator,  # EPSG:3857 easting
+            #         y_web_mercator   # EPSG:3857 northing
+            #     )
 
             def point_to_square(
                 centerx, centery, pixelWidth=pixelWidth, pixelHeight=pixelHeight
@@ -261,17 +292,14 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             for label in segm_deblend.labels:
                 xs, ys = np.where(np.array(segm_deblend) == label)
                 targetPixels = [[x, y] for (x, y) in zip(xs, ys)]
+                
+                if parameters["EPSG:32631"]:
+                    targetPixelsArray = [point_to_square(*each).buffer(0.001) for each in targetPixels]
+                else:
+                    targetPixelsArray = [point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(0.001) for each in targetPixels]
 
-                shapes.append(
-                    shapely.unary_union(
-                        [
-                            point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(
-                                0.001
-                            )
-                            for each in targetPixels
-                        ]
-                    )
-                )
+                shapes.append(shapely.unary_union(targetPixelsArray))
+            
             group = os.path.basename(inputFile).replace(".tif", "")
 
             geom = gpd.GeoSeries(shapes).set_crs(3857)
@@ -318,13 +346,16 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
 
         data = {
-            "Found this many": len(shapes),
+            "Total objects detected": len(shapes),
             "Background offset": parameters["Background offset"],
-            "parameters": parameters,
+            "Parameters": parameters,
         }
-        output_file = folder_path + "summary.json"
-        with open(output_file, "w") as file:
-            json.dump(data, file, indent=4)
+
+        if parameters["Output: parameter summary"]:
+            output_file = folder_path + "summary.json"
+            with open(output_file, "w") as file:
+                json.dump(data, file, indent=4)
+        
         return data
 
     def name(self):
