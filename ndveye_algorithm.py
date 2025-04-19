@@ -107,7 +107,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        # Add float input parameter field called offset:
+        # Add float input parameter field called Kernel FWHM:
         self.addParameter(
             QgsProcessingParameterNumber(
                 "Kernel FWHM",
@@ -213,6 +213,9 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         folder_path = self.parameterAsString(parameters, 'FOLDER_PATH', context)
         polygondfs = []
         pointdfs = []
+        objectcount = {}
+        totalcount = 0
+
         for index, inputId in enumerate(parameters["inputRasters"]):
             counter = 0
             for _, v in QgsProject.instance().mapLayers().items():
@@ -305,10 +308,14 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                     targetPixelsArray = [point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(0.001) for each in targetPixels]
 
                 shapes.append(shapely.unary_union(targetPixelsArray))
+
+            nr_detected_objects = len(shapes)
+            objectcount[inputId] = nr_detected_objects
+            totalcount += nr_detected_objects
             
             group = os.path.basename(inputFile).replace(".tif", "")
 
-            geom = gpd.GeoSeries(shapes).set_crs(3857)
+            geom = gpd.GeoSeries(shapes).set_crs(3857) ## FIXME: Change this instead of using allow_override?
             gdf = gpd.GeoDataFrame(geometry=geom)
             gdf["group"] = group
             polygondfs.append(gdf)
@@ -317,9 +324,6 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             gdf = gpd.GeoDataFrame(geometry=geom)
             gdf["group"] = group
             pointdfs.append(gdf)
-
-        # output_crs = 32631 if parameters["EPSG:32631"] else 3857
-        # original_crs = 3857
 
         if parameters["Output: polygons"]:
             
@@ -374,7 +378,8 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
 
         data = {
-            "Total objects detected": len(shapes),
+            "Total objects detected": totalcount,
+            "Objects per layer": objectcount,
             "Background offset": parameters["Background offset"],
             "Parameters": parameters,
         }
