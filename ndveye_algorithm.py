@@ -325,21 +325,21 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             
             if parameters["EPSG:32631"]:
                 gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(32631, allow_override=True).to_file(
-                folder_path + "polygons.gpkg",
+                folder_path + "/polygons.gpkg",
                 driver="GPKG",
                 layer="polygons",
                 engine="pyogrio",
                 )
             else: 
                 gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(3857).to_file(
-                folder_path + "polygons.gpkg",
+                folder_path + "/polygons.gpkg",
                 driver="GPKG",
                 layer="polygons",
                 engine="pyogrio",
                 )
             polygonLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
-                    folder_path + "polygons.gpkg", "resultPolygons", "ogr"
+                    folder_path + "/polygons.gpkg", "resultPolygons", "ogr"
                 )
             )
             polygonLayer.renderer().symbol().changeSymbolLayer(
@@ -349,7 +349,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         if parameters["Output: points"]:
             if parameters["EPSG:32631"]:
                 gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(32631, allow_override=True).to_file(
-                    folder_path + "points.gpkg",
+                    folder_path + "/points.gpkg",
                     driver="GPKG",
                     layer="points",
                     engine="pyogrio",
@@ -357,7 +357,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 )
             else: 
                 gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(3857).to_file(
-                    folder_path + "points.gpkg",
+                    folder_path + "/points.gpkg",
                     driver="GPKG",
                     layer="points",
                     engine="pyogrio",
@@ -366,7 +366,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             
             pointsLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
-                    folder_path + "points.gpkg", "resultPoints", "ogr"
+                    folder_path + "/points.gpkg", "resultPoints", "ogr"
                 )
             )
             pointsLayer.renderer().symbol().changeSymbolLayer(
@@ -380,7 +380,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         }
 
         if parameters["Output: parameter summary"]:
-            output_file = folder_path + "summary.json"
+            output_file = folder_path + "/summary.json"
             with open(output_file, "w") as file:
                 json.dump(data, file, indent=4)
         
