@@ -48,6 +48,8 @@ from qgis.core import (
     QgsSimpleLineSymbolLayer,
     QgsSimpleMarkerSymbolLayer,
     QgsProcessingParameterFolderDestination,
+    QgsCoordinateTransform, 
+    QgsCoordinateReferenceSystem
 )
 import os
 import shapely
@@ -58,7 +60,6 @@ import geopandas as gpd
 import astropy.convolution
 import photutils.segmentation
 import json
-# from pyproj import Transformer
 
 class ndveyeAlgorithm(QgsProcessingAlgorithm):
     """
@@ -240,17 +241,22 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 return x, y
 
             # EPSG:32631
-            # def pixelcoord_to_epsg32631(row, col):
-            #     x_web_mercator, y_web_mercator = pixelcoord_to_epsg3857(row, col)
-                
-            #     # Create transformer (3857 → 32631 via WGS84 geographic CRS)
-            #     transformer = Transformer.from_crs("EPSG:3857", "EPSG:32631", always_xy=True)
+            def pixelcoord_to_epsg32631(row, col):
+                try:
+                    # Initialize CRS objects
+                    source_crs = QgsCoordinateReferenceSystem("EPSG:3857")
+                    dest_crs = QgsCoordinateReferenceSystem("EPSG:32631")
 
-            #     # Convert Web Mercator coordinates to UTM 31N
-            #     return transformer.transform(
-            #         x_web_mercator,  # EPSG:3857 easting
-            #         y_web_mercator   # EPSG:3857 northing
-            #     )
+                    # Create transform with project context
+                    transform = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
+
+                    x, y = pixelcoord_to_epsg3857(row, col)
+                    # Transform point
+                    transformed_point = transform.transform(x, y)
+                    return transformed_point.x(), transformed_point.y()
+                except Exception as e:
+                    print(f"Transformation failed: {str(e)}")
+                    return None
 
             def point_to_square(
                 centerx, centery, pixelWidth=pixelWidth, pixelHeight=pixelHeight
@@ -294,7 +300,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 targetPixels = [[x, y] for (x, y) in zip(xs, ys)]
                 
                 if parameters["EPSG:32631"]:
-                    targetPixelsArray = [point_to_square(*each).buffer(0.001) for each in targetPixels]
+                    targetPixelsArray = [point_to_square(*pixelcoord_to_epsg32631(*each)).buffer(0.001) for each in targetPixels]
                 else:
                     targetPixelsArray = [point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(0.001) for each in targetPixels]
 
@@ -312,13 +318,25 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             gdf["group"] = group
             pointdfs.append(gdf)
 
+        # output_crs = 32631 if parameters["EPSG:32631"] else 3857
+        # original_crs = 3857
+
         if parameters["Output: polygons"]:
-            gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(3857).to_file(
+            
+            if parameters["EPSG:32631"]:
+                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(32631, allow_override=True).to_file(
                 folder_path + "polygons.gpkg",
                 driver="GPKG",
                 layer="polygons",
                 engine="pyogrio",
-            )
+                )
+            else: 
+                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(3857).to_file(
+                folder_path + "polygons.gpkg",
+                driver="GPKG",
+                layer="polygons",
+                engine="pyogrio",
+                )
             polygonLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
                     folder_path + "polygons.gpkg", "resultPolygons", "ogr"
@@ -329,13 +347,23 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
 
         if parameters["Output: points"]:
-            gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(3857).to_file(
-                folder_path + "points.gpkg",
-                driver="GPKG",
-                layer="points",
-                engine="pyogrio",
-                index=False,
-            )
+            if parameters["EPSG:32631"]:
+                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(32631, allow_override=True).to_file(
+                    folder_path + "points.gpkg",
+                    driver="GPKG",
+                    layer="points",
+                    engine="pyogrio",
+                    index=False,
+                )
+            else: 
+                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(3857).to_file(
+                    folder_path + "points.gpkg",
+                    driver="GPKG",
+                    layer="points",
+                    engine="pyogrio",
+                    index=False,
+                )
+            
             pointsLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
                     folder_path + "points.gpkg", "resultPoints", "ogr"
