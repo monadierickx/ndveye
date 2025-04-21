@@ -196,9 +196,9 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         
         self.addParameter(
             QgsProcessingParameterBoolean(
-                "EPSG:32631",
-                self.tr("Use EPSG:32631 (UTM 31N) instead of EPSG:3857 (Web Mercator)"),
-                defaultValue=True,
+                "EPSG:3857",
+                self.tr("Use EPSG:3857 (Web Mercator) instead of using the CRS from the input layers."),
+                defaultValue=False,
             )
         )
         
@@ -221,6 +221,8 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             for _, v in QgsProject.instance().mapLayers().items():
                 if v.id() == inputId:
                     inputFile = v.source()
+                    layer_crs = v.crs()
+                    layer_crs_id = layer_crs.authid()
                     counter += 1
             assert counter < 2, "Multiple layers with the same id found"
 
@@ -244,17 +246,13 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 return x, y
 
             # EPSG:32631
-            def pixelcoord_to_epsg32631(row, col):
+            def pixelcoord_to_layer_crs(row, col):
                 try:
-                    # Initialize CRS objects
                     source_crs = QgsCoordinateReferenceSystem("EPSG:3857")
-                    dest_crs = QgsCoordinateReferenceSystem("EPSG:32631")
-
-                    # Create transform with project context
-                    transform = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
+                    transform = QgsCoordinateTransform(source_crs, layer_crs, QgsProject.instance())
 
                     x, y = pixelcoord_to_epsg3857(row, col)
-                    # Transform point
+                    
                     transformed_point = transform.transform(x, y)
                     return transformed_point.x(), transformed_point.y()
                 except Exception as e:
@@ -302,10 +300,10 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 xs, ys = np.where(np.array(segm_deblend) == label)
                 targetPixels = [[x, y] for (x, y) in zip(xs, ys)]
                 
-                if parameters["EPSG:32631"]:
-                    targetPixelsArray = [point_to_square(*pixelcoord_to_epsg32631(*each)).buffer(0.001) for each in targetPixels]
-                else:
+                if parameters["EPSG:3857"]:
                     targetPixelsArray = [point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(0.001) for each in targetPixels]
+                else: 
+                    targetPixelsArray = [point_to_square(*pixelcoord_to_layer_crs(*each)).buffer(0.001) for each in targetPixels]
 
                 shapes.append(shapely.unary_union(targetPixelsArray))
 
@@ -315,7 +313,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             
             group = os.path.basename(inputFile).replace(".tif", "")
 
-            geom = gpd.GeoSeries(shapes).set_crs(3857) ## FIXME: Change this instead of using allow_override?
+            geom = gpd.GeoSeries(shapes).set_crs(3857) if parameters["EPSG:3857"] else gpd.GeoSeries(shapes).set_crs(layer_crs_id)
             gdf = gpd.GeoDataFrame(geometry=geom)
             gdf["group"] = group
             polygondfs.append(gdf)
@@ -327,20 +325,21 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
 
         if parameters["Output: polygons"]:
             
-            if parameters["EPSG:32631"]:
-                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(32631, allow_override=True).to_file(
-                folder_path + "/polygons.gpkg",
-                driver="GPKG",
-                layer="polygons",
-                engine="pyogrio",
+            if parameters["EPSG:3857"]:
+                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(3857).to_file(
+                    folder_path + "/polygons.gpkg",
+                    driver="GPKG",
+                    layer="polygons",
+                    engine="pyogrio",
                 )
             else: 
-                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(3857).to_file(
-                folder_path + "/polygons.gpkg",
-                driver="GPKG",
-                layer="polygons",
-                engine="pyogrio",
+                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(layer_crs_id).to_file(
+                    folder_path + "/polygons.gpkg",
+                    driver="GPKG",
+                    layer="polygons",
+                    engine="pyogrio",
                 )
+            
             polygonLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
                     folder_path + "/polygons.gpkg", "resultPolygons", "ogr"
@@ -351,16 +350,16 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
 
         if parameters["Output: points"]:
-            if parameters["EPSG:32631"]:
-                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(32631, allow_override=True).to_file(
+            if parameters["EPSG:3857"]:
+                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(3857).to_file(
                     folder_path + "/points.gpkg",
                     driver="GPKG",
                     layer="points",
                     engine="pyogrio",
                     index=False,
                 )
-            else: 
-                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(3857).to_file(
+            else:
+                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(layer_crs_id).to_file(
                     folder_path + "/points.gpkg",
                     driver="GPKG",
                     layer="points",
