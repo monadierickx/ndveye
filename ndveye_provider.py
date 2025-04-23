@@ -32,8 +32,6 @@ __revision__ = '$Format:%H$'
 
 from qgis.core import QgsProcessingProvider
 from .ndveye_algorithm import ndveyeAlgorithm
-from .ndveye_algorithm_2 import ndveye2Algorithm
-
 
 class ndveyeProvider(QgsProcessingProvider):
 
@@ -55,7 +53,6 @@ class ndveyeProvider(QgsProcessingProvider):
         Loads all algorithms belonging to this provider.
         """
         self.addAlgorithm(ndveyeAlgorithm())
-        self.addAlgorithm(ndveye2Algorithm())
         # add additional algorithms here
         # self.addAlgorithm(MyOtherAlgorithm())
 
