@@ -197,7 +197,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         self.addParameter(
             QgsProcessingParameterBoolean(
                 "EPSG:3857",
-                self.tr("Use EPSG:3857 (Web Mercator) instead of using the CRS from the input layers."),
+                self.tr("Use EPSG:3857 (Web Mercator) instead of EPSG:32631."),
                 defaultValue=False,
             )
         )
@@ -221,8 +221,8 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             for _, v in QgsProject.instance().mapLayers().items():
                 if v.id() == inputId:
                     inputFile = v.source()
-                    layer_crs = v.crs()
-                    layer_crs_id = layer_crs.authid()
+                    # layer_crs = v.crs()
+                    # layer_crs_id = layer_crs.authid()
                     counter += 1
             assert counter < 2, "Multiple layers with the same id found"
 
@@ -246,10 +246,12 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 return x, y
 
             # EPSG:32631
-            def pixelcoord_to_layer_crs(row, col):
+            # def pixelcoord_to_layer_crs(row, col):
+            def pixelcoord_to_epsg32631(row, col):
                 try:
                     source_crs = QgsCoordinateReferenceSystem("EPSG:3857")
-                    transform = QgsCoordinateTransform(source_crs, layer_crs, QgsProject.instance())
+                    dest_crs = QgsCoordinateReferenceSystem(" EPSG:32631")
+                    transform = QgsCoordinateTransform(source_crs, dest_crs, QgsProject.instance())
 
                     x, y = pixelcoord_to_epsg3857(row, col)
                     
@@ -303,7 +305,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                 if parameters["EPSG:3857"]:
                     targetPixelsArray = [point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(0.001) for each in targetPixels]
                 else: 
-                    targetPixelsArray = [point_to_square(*pixelcoord_to_layer_crs(*each)).buffer(0.001) for each in targetPixels]
+                    targetPixelsArray = [point_to_square(*pixelcoord_to_epsg32631(*each)).buffer(0.001) for each in targetPixels]
 
                 shapes.append(shapely.unary_union(targetPixelsArray))
 
@@ -313,7 +315,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             
             group = os.path.basename(inputFile).replace(".tif", "")
 
-            geom = gpd.GeoSeries(shapes).set_crs(3857) if parameters["EPSG:3857"] else gpd.GeoSeries(shapes).set_crs(layer_crs_id)
+            geom = gpd.GeoSeries(shapes).set_crs(3857) if parameters["EPSG:3857"] else gpd.GeoSeries(shapes).set_crs(32631)
             gdf = gpd.GeoDataFrame(geometry=geom)
             gdf["group"] = group
             polygondfs.append(gdf)
@@ -333,7 +335,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                     engine="pyogrio",
                 )
             else: 
-                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(layer_crs_id).to_file(
+                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(32631).to_file(
                     folder_path + "/polygons.gpkg",
                     driver="GPKG",
                     layer="polygons",
@@ -359,7 +361,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                     index=False,
                 )
             else:
-                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(layer_crs_id).to_file(
+                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(32631).to_file(
                     folder_path + "/points.gpkg",
                     driver="GPKG",
                     layer="points",
