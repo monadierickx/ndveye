@@ -60,8 +60,9 @@ import geopandas as gpd
 import astropy.convolution
 import photutils.segmentation
 import json
+from photutils.background import Background2D, MedianBackground
 
-class ndveyeAlgorithm(QgsProcessingAlgorithm):
+class ndveyeAlgorithm2(QgsProcessingAlgorithm):
     """
     This is an example algorithm that takes a vector layer and
     creates a new identical one.
@@ -97,6 +98,24 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                "Min plant diameter (cm)",
+                self.tr("Minimum plant diameter (cm)"),
+                QgsProcessingParameterNumber.Double,
+                5.0  # Default for small plants
+            )
+        )
+
+        self.addParameter(
+            QgsProcessingParameterNumber(
+                "Max plant diameter (cm)", 
+                self.tr("Maximum plant diameter (cm)"),
+                QgsProcessingParameterNumber.Double,
+                30.0  # Default for mature plants
+            )
+        )
+
         # Add float input parameter field called offset:
         self.addParameter(
             QgsProcessingParameterNumber(
@@ -107,24 +126,24 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        # Add float input parameter field called Kernel FWHM:
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                "Kernel FWHM",
-                self.tr("Kernel FWHM"),
-                QgsProcessingParameterNumber.Double,
-                1.0,
-            )
-        )
+        # # Add float input parameter field called Kernel FWHM:
+        # self.addParameter(
+        #     QgsProcessingParameterNumber(
+        #         "Kernel FWHM",
+        #         self.tr("Kernel FWHM"),
+        #         QgsProcessingParameterNumber.Double,
+        #         1.0,
+        #     )
+        # )
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                "Kernel size",
-                self.tr("Kernel size"),
-                QgsProcessingParameterNumber.Integer,
-                7,
-            )
-        )
+        # self.addParameter(
+        #     QgsProcessingParameterNumber(
+        #         "Kernel size",
+        #         self.tr("Kernel size"),
+        #         QgsProcessingParameterNumber.Integer,
+        #         7,
+        #     )
+        # )
 
         self.addParameter(
             QgsProcessingParameterNumber(
@@ -135,14 +154,14 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                "Minimum pixel count",
-                self.tr("Minimum pixel count"),
-                QgsProcessingParameterNumber.Integer,
-                2,
-            )
-        )
+        # self.addParameter(
+        #     QgsProcessingParameterNumber(
+        #         "Minimum pixel count",
+        #         self.tr("Minimum pixel count"),
+        #         QgsProcessingParameterNumber.Integer,
+        #         2,
+        #     )
+        # )
 
         self.addParameter(
             QgsProcessingParameterBoolean(
@@ -152,14 +171,14 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             )
         )
 
-        self.addParameter(
-            QgsProcessingParameterNumber(
-                "Number of deblending thresholds",
-                self.tr("Number of deblending thresholds"),
-                QgsProcessingParameterNumber.Integer,
-                500,
-            )
-        )
+        # self.addParameter(
+        #     QgsProcessingParameterNumber(
+        #         "Number of deblending thresholds",
+        #         self.tr("Number of deblending thresholds"),
+        #         QgsProcessingParameterNumber.Integer,
+        #         500,
+        #     )
+        # )
 
         self.addParameter(
             QgsProcessingParameterNumber(
@@ -211,6 +230,16 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, parameters, context, feedback):
         folder_path = self.parameterAsString(parameters, 'FOLDER_PATH', context)
+        resolution_cm = 1.0  # TODO: Extract from raster metadata
+        min_pixels = parameters["Min plant diameter (cm)"] / resolution_cm
+        max_pixels = parameters["Max plant diameter (cm)"] / resolution_cm
+
+        kernel_fwhm = min_pixels * 0.8
+        kernel_size = int(2 * max_pixels + 1)
+        
+        npixels = int(np.pi * (min_pixels/2)**2)
+        nlevels = int(50 * (max_pixels/min_pixels))
+
         polygondfs = []
         pointdfs = []
         objectcount = {}
@@ -256,27 +285,31 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
                         [centerx - pixelWidth / 2, centery - pixelHeight / 2],
                     ]
                 )
-
+            
             # Apply background offset
+            # bkg_estimator = MedianBackground()
+            # bkg = Background2D(data, (50,50), filter_size=(3,3), 
+            #                 bkg_estimator=bkg_estimator)
+            # data -= bkg.background
             data -= np.ones(shape=data.shape) * parameters["Background offset"]
 
             kernel = photutils.segmentation.make_2dgaussian_kernel(
-                parameters["Kernel FWHM"], size=parameters["Kernel size"]
+                kernel_fwhm, size=kernel_size
             )
             convolved_data = astropy.convolution.convolve(data, kernel)
 
             segment_map = photutils.segmentation.detect_sources(
                 convolved_data,
                 np.ones(shape=data.shape) * parameters["Detection threshold"],
-                npixels=parameters["Minimum pixel count"],
+                npixels=npixels,
                 connectivity=8 if parameters["Connectivity: use 8 instead of 4"] else 4,
             )
 
             segm_deblend = photutils.segmentation.deblend_sources(
                 convolved_data,
                 segment_map,
-                npixels=parameters["Minimum pixel count"],
-                nlevels=parameters["Number of deblending thresholds"],
+                npixels=npixels,
+                nlevels=nlevels,
                 contrast=parameters["Minimum contrast for object separation"],
                 progress_bar=True,
             )
@@ -363,7 +396,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             "Objects per layer": objectcount,
             "CRS": layer_crs_id,
             "Background offset": parameters["Background offset"],
-            "Input Parameters": parameters,
+            "Parameters": parameters,
         }
 
         if parameters["Output: parameter summary"]:
@@ -381,7 +414,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return "ndveye"
+        return "ndveye modified"
 
     def displayName(self):
         """
@@ -411,4 +444,4 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         return QCoreApplication.translate("Processing", string)
 
     def createInstance(self):
-        return ndveyeAlgorithm()
+        return ndveyeAlgorithm2()
