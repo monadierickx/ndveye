@@ -239,25 +239,10 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             pixelWidth = totalWidth / colNum
             pixelHeight = totalHeight / rowNum
 
-            # EPSG:3857
             def pixelcoord_to_epsg3857(row, col):
                 x = bounds.left + (col + 1 / 2) * pixelWidth
                 y = bounds.top - (row + 1 / 2) * pixelHeight
                 return x, y
-
-            # EPSG:32631
-            def pixelcoord_to_layer_crs(row, col):
-                try:
-                    source_crs = QgsCoordinateReferenceSystem("EPSG:3857")
-                    transform = QgsCoordinateTransform(source_crs, layer_crs, QgsProject.instance())
-
-                    x, y = pixelcoord_to_epsg3857(row, col)
-                    
-                    transformed_point = transform.transform(x, y)
-                    return transformed_point.x(), transformed_point.y()
-                except Exception as e:
-                    print(f"Transformation failed: {str(e)}")
-                    return None
 
             def point_to_square(
                 centerx, centery, pixelWidth=pixelWidth, pixelHeight=pixelHeight
@@ -299,11 +284,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
             for label in segm_deblend.labels:
                 xs, ys = np.where(np.array(segm_deblend) == label)
                 targetPixels = [[x, y] for (x, y) in zip(xs, ys)]
-                
-                if parameters["EPSG:3857"]:
-                    targetPixelsArray = [point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(0.001) for each in targetPixels]
-                else: 
-                    targetPixelsArray = [point_to_square(*pixelcoord_to_layer_crs(*each)).buffer(0.001) for each in targetPixels]
+                targetPixelsArray = [point_to_square(*pixelcoord_to_epsg3857(*each)).buffer(0.001) for each in targetPixels]
 
                 shapes.append(shapely.unary_union(targetPixelsArray))
 
@@ -379,6 +360,7 @@ class ndveyeAlgorithm(QgsProcessingAlgorithm):
         data = {
             "Total objects detected": totalcount,
             "Objects per layer": objectcount,
+            "CRS": layer_crs_id,
             "Background offset": parameters["Background offset"],
             "Parameters": parameters,
         }

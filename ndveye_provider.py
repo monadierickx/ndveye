@@ -33,7 +33,6 @@ __revision__ = '$Format:%H$'
 from qgis.core import QgsProcessingProvider
 from .ndveye_algorithm import ndveyeAlgorithm
 
-
 class ndveyeProvider(QgsProcessingProvider):
 
     def __init__(self):
