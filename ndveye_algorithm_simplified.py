@@ -35,21 +35,16 @@ from qgis.PyQt.QtCore import QCoreApplication
 from qgis.core import (
     QgsProcessing,
     QgsProcessingAlgorithm,
-    QgsProcessingParameterRasterLayer,
     QgsProcessingParameterMultipleLayers,
-    QgsProcessingParameterFile,
     QgsProcessingParameterNumber,
     QgsProcessingParameterBoolean,
-    QgsPointXY,
-    QgsGeometry,
     QgsProject,
     QgsVectorLayer,
-    QgsFeature,
     QgsSimpleLineSymbolLayer,
     QgsSimpleMarkerSymbolLayer,
     QgsProcessingParameterFolderDestination,
-    QgsCoordinateTransform, 
-    QgsCoordinateReferenceSystem
+    QgsDistanceArea,
+    QgsPointXY,
 )
 import os
 import shapely
@@ -60,7 +55,8 @@ import geopandas as gpd
 import astropy.convolution
 import photutils.segmentation
 import json
-from photutils.background import Background2D, MedianBackground
+# from photutils.background import Background2D, MedianBackground
+# from astropy.stats import sigma_clipped_stats
 
 class ndveyeAlgorithm2(QgsProcessingAlgorithm):
     """
@@ -103,7 +99,7 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
                 "Min plant diameter (cm)",
                 self.tr("Minimum plant diameter (cm)"),
                 QgsProcessingParameterNumber.Double,
-                5.0  # Default for small plants
+                5.0
             )
         )
 
@@ -112,7 +108,7 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
                 "Max plant diameter (cm)", 
                 self.tr("Maximum plant diameter (cm)"),
                 QgsProcessingParameterNumber.Double,
-                30.0  # Default for mature plants
+                30.0
             )
         )
 
@@ -126,42 +122,14 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             )
         )
 
-        # # Add float input parameter field called Kernel FWHM:
-        # self.addParameter(
-        #     QgsProcessingParameterNumber(
-        #         "Kernel FWHM",
-        #         self.tr("Kernel FWHM"),
-        #         QgsProcessingParameterNumber.Double,
-        #         1.0,
-        #     )
-        # )
-
-        # self.addParameter(
-        #     QgsProcessingParameterNumber(
-        #         "Kernel size",
-        #         self.tr("Kernel size"),
-        #         QgsProcessingParameterNumber.Integer,
-        #         7,
-        #     )
-        # )
-
         self.addParameter(
             QgsProcessingParameterNumber(
                 "Detection threshold",
                 self.tr("Detection threshold"),
                 QgsProcessingParameterNumber.Double,
-                0.08,
+                0.5,
             )
         )
-
-        # self.addParameter(
-        #     QgsProcessingParameterNumber(
-        #         "Minimum pixel count",
-        #         self.tr("Minimum pixel count"),
-        #         QgsProcessingParameterNumber.Integer,
-        #         2,
-        #     )
-        # )
 
         self.addParameter(
             QgsProcessingParameterBoolean(
@@ -171,21 +139,12 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             )
         )
 
-        # self.addParameter(
-        #     QgsProcessingParameterNumber(
-        #         "Number of deblending thresholds",
-        #         self.tr("Number of deblending thresholds"),
-        #         QgsProcessingParameterNumber.Integer,
-        #         500,
-        #     )
-        # )
-
         self.addParameter(
             QgsProcessingParameterNumber(
                 "Minimum contrast for object separation",
                 self.tr("Minimum contrast for object separation"),
                 QgsProcessingParameterNumber.Double,
-                0.00005,
+                0.05,
             )
         )
 
@@ -230,22 +189,26 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
 
     def processAlgorithm(self, parameters, context, feedback):
         folder_path = self.parameterAsString(parameters, 'FOLDER_PATH', context)
-        resolution_cm = 1.0  # TODO: Extract from raster metadata
-        min_pixels = parameters["Min plant diameter (cm)"] / resolution_cm
-        max_pixels = parameters["Max plant diameter (cm)"] / resolution_cm
 
-        kernel_fwhm = min_pixels * 0.8
-        kernel_size = int(2 * max_pixels + 1)
-        
-        npixels = int(np.pi * (min_pixels/2)**2)
-        nlevels = int(50 * (max_pixels/min_pixels))
+        def getCalculatedParameters(min_cm, max_cm, res_cm):
+            min_pixels = min_cm / res_cm
+            max_pixels = max_cm / res_cm
+
+            kernel_fwhm = min_pixels * 0.8
+            kernel_size = 2 * int(max_pixels) + 1
+
+            npixels = int(np.pi * (min_pixels/2)**2)
+            nlevels = int(50 * (max_pixels/min_pixels))
+
+            return {"kernel_fwhm": kernel_fwhm, "kernel_size": kernel_size, "npixels": npixels, "nlevels": nlevels, "res_cm": res_cm}
 
         polygondfs = []
         pointdfs = []
         objectcount = {}
         totalcount = 0
+        calculated_parameters_per_layer = {}
 
-        for index, inputId in enumerate(parameters["inputRasters"]):
+        for _, inputId in enumerate(parameters["inputRasters"]):
             counter = 0
             for _, v in QgsProject.instance().mapLayers().items():
                 if v.id() == inputId:
@@ -257,7 +220,6 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
 
             with rasterio.open(inputFile, "r") as src:
                 data = src.read(1)
-                profile = src.profile
                 bounds = src.bounds
 
             rowNum, colNum = data.shape
@@ -286,31 +248,65 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
                     ]
                 )
             
+            layer = QgsProject.instance().mapLayer(inputId)
+            extent = layer.extent()
+            width = layer.width()
+            x_res_crs = (extent.xMaximum() - extent.xMinimum()) / width
+
+            if layer.crs().isGeographic():
+                da = QgsDistanceArea()
+                da.setSourceCrs(layer.crs(), QgsProject.instance().transformContext())
+                start_point = QgsPointXY(extent.center().x(), extent.center().y())
+                end_point = QgsPointXY(extent.center().x() + x_res_crs, extent.center().y())
+                x_res_meters = da.measureLine(start_point, end_point)
+            else:
+                x_res_meters = x_res_crs
+
+            res_cm = x_res_meters * 100
+
+            calculated_parameters = getCalculatedParameters(
+                min_cm=parameters["Min plant diameter (cm)"],
+                max_cm=parameters["Max plant diameter (cm)"],
+                res_cm=res_cm
+            )
+
+            calculated_parameters_per_layer[inputId] = calculated_parameters
+            
             # Apply background offset
-            # bkg_estimator = MedianBackground()
-            # bkg = Background2D(data, (50,50), filter_size=(3,3), 
-            #                 bkg_estimator=bkg_estimator)
+            # bkg = Background2D(data, (50,50), filter_size=(3,3))
             # data -= bkg.background
             data -= np.ones(shape=data.shape) * parameters["Background offset"]
 
+            # Calculate contrast
+            # contrast = 0.5 * (np.max(data) - np.min(data)) / 100
+            # constrast_per_layer[inputId] = contrast
+            contrast = parameters["Minimum contrast for object separation"]
+
+
+            # Caluclate threshold
+            # _, median, std = sigma_clipped_stats(data)
+            # threshold = median + 3*std
+            # threshold_per_layer[inputId] = threshold
+            threshold = parameters["Detection threshold"]
+
             kernel = photutils.segmentation.make_2dgaussian_kernel(
-                kernel_fwhm, size=kernel_size
+                calculated_parameters["kernel_fwhm"], size=calculated_parameters["kernel_size"]
             )
             convolved_data = astropy.convolution.convolve(data, kernel)
 
             segment_map = photutils.segmentation.detect_sources(
                 convolved_data,
-                np.ones(shape=data.shape) * parameters["Detection threshold"],
-                npixels=npixels,
+                np.ones(shape=data.shape) * threshold,
+                npixels=calculated_parameters["npixels"],
                 connectivity=8 if parameters["Connectivity: use 8 instead of 4"] else 4,
             )
 
             segm_deblend = photutils.segmentation.deblend_sources(
                 convolved_data,
                 segment_map,
-                npixels=npixels,
-                nlevels=nlevels,
-                contrast=parameters["Minimum contrast for object separation"],
+                npixels=calculated_parameters["npixels"],
+                nlevels=calculated_parameters["nlevels"],
+                contrast=contrast,
                 progress_bar=True,
             )
 
@@ -395,8 +391,8 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             "Total objects detected": totalcount,
             "Objects per layer": objectcount,
             "CRS": layer_crs_id,
-            "Background offset": parameters["Background offset"],
-            "Parameters": parameters,
+            "Input Parameters": parameters,
+            "Calculated Parameters per layer": calculated_parameters_per_layer
         }
 
         if parameters["Output: parameter summary"]:
@@ -414,7 +410,7 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return "ndveye modified"
+        return "ndveye simplified inputs"
 
     def displayName(self):
         """

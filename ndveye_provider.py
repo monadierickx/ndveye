@@ -32,7 +32,7 @@ __revision__ = '$Format:%H$'
 
 from qgis.core import QgsProcessingProvider
 from .ndveye_algorithm import ndveyeAlgorithm
-from .ndveye_algorithm_modified import ndveyeAlgorithm2
+from .ndveye_algorithm_simplified import ndveyeAlgorithm2
 
 class ndveyeProvider(QgsProcessingProvider):
 
