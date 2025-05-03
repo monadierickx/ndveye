@@ -45,6 +45,7 @@ from qgis.core import (
     QgsProcessingParameterFolderDestination,
     QgsDistanceArea,
     QgsPointXY,
+    QgsUnitTypes
 )
 import os
 import shapely
@@ -264,19 +265,23 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
                     ]
                 )
             
+            # Get resolution in centimeters
             layer = QgsProject.instance().mapLayer(inputId)
             extent = layer.extent()
             width = layer.width()
             x_res_crs = (extent.xMaximum() - extent.xMinimum()) / width
 
             if layer.crs().isGeographic():
+                # Convert from degree-based resolution to meters
                 da = QgsDistanceArea()
                 da.setSourceCrs(layer.crs(), QgsProject.instance().transformContext())
                 start_point = QgsPointXY(extent.center().x(), extent.center().y())
                 end_point = QgsPointXY(extent.center().x() + x_res_crs, extent.center().y())
                 x_res_meters = da.measureLine(start_point, end_point)
             else:
-                x_res_meters = x_res_crs
+                # Convert to meters if necessary
+                unit = layer.crs().mapUnits()
+                x_res_meters = QgsUnitTypes.fromUnitToUnitFactor(unit, QgsUnitTypes.DistanceMeters) * x_res_crs
 
             res_cm = x_res_meters * 100
 
@@ -406,7 +411,7 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
         lowercase alphanumeric characters only and no spaces or other
         formatting characters.
         """
-        return "ndveye simplified inputs"
+        return "ndveye (with biological inputs)"
 
     def displayName(self):
         """
