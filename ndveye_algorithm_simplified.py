@@ -79,116 +79,138 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
     OUTPUT = "OUTPUT"
     INPUT = "INPUT"
 
+    def add_param(self, param, help_text=None):
+        if help_text:
+            param.setHelp(help_text)
+        self.addParameter(param)
+
     def initAlgorithm(self, config):
         """
         Here we define the inputs and output of the algorithm, along
         with some other properties.
         """
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterMultipleLayers(
                 "inputRasters",
                 # accept any raster layers:
                 self.tr("Input raster(s)"),
                 QgsProcessing.TypeRaster,
-            )
+            ),
+            "The layer that will be analysed and where the plants will be counted by the algorithm. Consider preprocessing these layers by using spectral indeces, such as NDVI."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterNumber(
                 "Min plant diameter (cm)",
                 self.tr("Minimum plant diameter (cm)"),
                 QgsProcessingParameterNumber.Double,
-                5.0
-            )
+                defaultValue=5.0,
+                minValue=1.0,
+                maxValue=100.0
+            ),
+            "The estimated minimum diameter of a plant that could be detected by the algorithm."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterNumber(
                 "Max plant diameter (cm)", 
                 self.tr("Maximum plant diameter (cm)"),
                 QgsProcessingParameterNumber.Double,
-                30.0
-            )
+                defaultValue=30.0,
+                minValue=1.0,
+                maxValue=100.0
+            ),
+            "The estimated maximum diameter of a plant that could be detected by the algorithm. To allow the polygons to be generated correctly a distance of at least the maximum plant diameter should be kept between the plants and the borders of the layer."
         )
 
-        # Add float input parameter field called offset:
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterNumber(
                 "Background offset",
                 self.tr("Background offset"),
                 QgsProcessingParameterNumber.Double,
-                0.15,
-            )
+                defaultValue=0.15,
+                minValue=0.0,
+                maxValue=0.9
+            ),
+            "This value will be subtracted from each pixel to make the true features stand out more. In case of a brighter background (for example due to more weeds) a higher background offset will improve the algorithms' results."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterNumber(
                 "Detection threshold",
                 self.tr("Detection threshold"),
                 QgsProcessingParameterNumber.Double,
-                0.5,
-            )
+                defaultValue=0.5,
+                minValue=0.0,
+                maxValue=10.0
+            ),
+            "The minimum value a pixel needs to have in order to be seen as part of an object that could be detected."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterBoolean(
                 "Connectivity: use 8 instead of 4",
                 self.tr("Connectivity: use 8 instead of 4"),
                 defaultValue=False,
-            )
+            ),
+            "The connectivity method that used to determine the amount of pixels that make up an object. In case of 4-connectivity each pixel is only considered as connected to the pixels that touch along the edges, making each pixel connected to 4 other pixels. With 8-connectivity pixels that touch along the corneers are also considered as connected, making each pixel connected to 8 other pixels."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterNumber(
                 "Minimum contrast for object separation",
                 self.tr("Minimum contrast for object separation"),
                 QgsProcessingParameterNumber.Double,
-                0.05,
-            )
+                defaultValue=0.05,
+                minValue=0.0,
+                maxValue=10.0
+            ),
+            "The minimum difference between two peaks for them to be seen as different objects. If there is a lot of distance between the plants, this value can be higher, if a lot of plants are touching this value should be lower."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterBoolean(
                 "Output: polygons",
                 self.tr("Output: polygons"),
                 defaultValue=True,
-            )
+            ),
+            "Determines whether or not a vector layer with the polygons of the detected plants will be generated. The polygons will be the smallest possible polygon that contains the plant."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterBoolean(
                 "Output: points",
                 self.tr("Output: points"),
                 defaultValue=True,
-            )
+            ),
+            "Determines whether or not a vector layer with the points of the detected plants will be generated. The points will be the center of each plant."
         )
 
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterBoolean(
-                "Output: parameter summary",
-                self.tr("Output: parameter summary"),
+                "Output: summary",
+                self.tr("Output: summary"),
                 defaultValue=True,
-            )
+            ),
+            "Determines whether or not a json file with a summary of the parameters used for the analysis and the number of detected plants (per layer) will be generated."
         )
         
-        self.addParameter(
-            QgsProcessingParameterBoolean(
-                "EPSG:3857",
-                self.tr("Use EPSG:3857 (Web Mercator) instead of using the CRS from the input layers."),
-                defaultValue=False,
-            )
-        )
-        
-        self.addParameter(
+        self.add_param(
             QgsProcessingParameterFolderDestination(
-                "FOLDER_PATH",
+                "Folder path",
                 "Folder location"
-            )
+            ),
+            "The folder where the output files will be saved."
         )
 
     def processAlgorithm(self, parameters, context, feedback):
-        folder_path = self.parameterAsString(parameters, 'FOLDER_PATH', context)
+        folder_path = self.parameterAsString(parameters, 'Folder path', context)
+        polygondfs = []
+        pointdfs = []
+        objectcount = {}
+        totalcount = 0
+        calculated_parameters_per_layer = {}
 
         def getCalculatedParameters(min_cm, max_cm, res_cm):
             min_pixels = min_cm / res_cm
@@ -201,12 +223,6 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             nlevels = int(50 * (max_pixels/min_pixels))
 
             return {"kernel_fwhm": kernel_fwhm, "kernel_size": kernel_size, "npixels": npixels, "nlevels": nlevels, "res_cm": res_cm}
-
-        polygondfs = []
-        pointdfs = []
-        objectcount = {}
-        totalcount = 0
-        calculated_parameters_per_layer = {}
 
         for _, inputId in enumerate(parameters["inputRasters"]):
             counter = 0
@@ -324,7 +340,7 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             
             group = os.path.basename(inputFile).replace(".tif", "")
 
-            geom = gpd.GeoSeries(shapes).set_crs(3857) if parameters["EPSG:3857"] else gpd.GeoSeries(shapes).set_crs(layer_crs_id)
+            geom = gpd.GeoSeries(shapes).set_crs(layer_crs_id)
             gdf = gpd.GeoDataFrame(geometry=geom)
             gdf["group"] = group
             polygondfs.append(gdf)
@@ -335,22 +351,12 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             pointdfs.append(gdf)
 
         if parameters["Output: polygons"]:
-            
-            if parameters["EPSG:3857"]:
-                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(3857).to_file(
-                    folder_path + "/polygons.gpkg",
-                    driver="GPKG",
-                    layer="polygons",
-                    engine="pyogrio",
-                )
-            else: 
-                gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(layer_crs_id).to_file(
-                    folder_path + "/polygons.gpkg",
-                    driver="GPKG",
-                    layer="polygons",
-                    engine="pyogrio",
-                )
-            
+            gpd.GeoDataFrame(pd.concat(polygondfs)).set_crs(layer_crs_id).to_file(
+                folder_path + "/polygons.gpkg",
+                driver="GPKG",
+                layer="polygons",
+                engine="pyogrio",
+            )
             polygonLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
                     folder_path + "/polygons.gpkg", "resultPolygons", "ogr"
@@ -361,23 +367,13 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             )
 
         if parameters["Output: points"]:
-            if parameters["EPSG:3857"]:
-                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(3857).to_file(
-                    folder_path + "/points.gpkg",
-                    driver="GPKG",
-                    layer="points",
-                    engine="pyogrio",
-                    index=False,
-                )
-            else:
-                gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(layer_crs_id).to_file(
-                    folder_path + "/points.gpkg",
-                    driver="GPKG",
-                    layer="points",
-                    engine="pyogrio",
-                    index=False,
-                )
-            
+            gpd.GeoSeries(pd.concat([e.geometry for e in pointdfs])).set_crs(layer_crs_id).to_file(
+                folder_path + "/points.gpkg",
+                driver="GPKG",
+                layer="points",
+                engine="pyogrio",
+                index=False,
+            )
             pointsLayer = QgsProject.instance().addMapLayer(
                 QgsVectorLayer(
                     folder_path + "/points.gpkg", "resultPoints", "ogr"
@@ -395,7 +391,7 @@ class ndveyeAlgorithm2(QgsProcessingAlgorithm):
             "Calculated Parameters per layer": calculated_parameters_per_layer
         }
 
-        if parameters["Output: parameter summary"]:
+        if parameters["Output: summary"]:
             output_file = folder_path + "/summary.json"
             with open(output_file, "w") as file:
                 json.dump(data, file, indent=4)
